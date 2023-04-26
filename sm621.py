@@ -1,79 +1,130 @@
+import sys
 import serial
-import threading
-import tkinter as tk
-from tkinter import ttk
+from serial.tools import list_ports
+from PyQt5.QtWidgets import QApplication, QMainWindow, QComboBox, QPushButton, QTextEdit, QMessageBox, QLabel
+from PyQt5.QtCore import QThread, pyqtSignal
 
-class SM621GUI:
-    def __init__(self, master):
-        self.master = master
-        master.title("SM621 Serial Reader")
 
-        # Create Serial Port Label and Combo Box
-        self.serial_port_label = ttk.Label(master, text="Serial Port:")
-        self.serial_port_label.grid(column=0, row=0, padx=5, pady=5)
+class SerialThread(QThread):
+    data_received = pyqtSignal(str)
 
-        self.serial_port_combo = ttk.Combobox(master, values=self.serial_ports())
-        self.serial_port_combo.grid(column=1, row=0, padx=5, pady=5)
-        self.serial_port_combo.current(0)
+    def __init__(self, port, baudrate, parent=None):
+        super().__init__(parent)
+        self.port = port
+        self.baudrate = baudrate
+        self.serial_port = None
 
-        # Create Baud Rate Label and Combo Box
-        self.baud_rate_label = ttk.Label(master, text="Baud Rate:")
-        self.baud_rate_label.grid(column=0, row=1, padx=5, pady=5)
+    def run(self):
+        try:
+            self.serial_port = serial.Serial(self.port, self.baudrate)
+            while self.serial_port.isOpen():
+                data = self.serial_port.read_until(b'\xc0').decode('utf-8', errors='ignore')
+                self.data_received.emit(data)
+        except Exception as e:
+            print(e)
+            self.serial_port.close()
 
-        self.baud_rate_combo = ttk.Combobox(master, values=["2400", "4800", "9600", "19200", "38400", "57600", "115200"])
-        self.baud_rate_combo.grid(column=1, row=1, padx=5, pady=5)
-        self.baud_rate_combo.current(2)
 
-        # Create Open and Close Serial Port Buttons
-        self.open_button = ttk.Button(master, text="Open Port", command=self.open_serial_port)
-        self.open_button.grid(column=0, row=2, padx=5, pady=5)
+class MainWindow(QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Serial Port Reader')
+        self.setGeometry(100, 100, 500, 500)
 
-        self.close_button = ttk.Button(master, text="Close Port", command=self.close_serial_port, state="disabled")
-        self.close_button.grid(column=1, row=2, padx=5, pady=5)
+        self.serial_thread = None
 
-        # Create Send Command Button
-        self.send_command_button = ttk.Button(master, text="Send Command", command=self.send_command, state="disabled")
-        self.send_command_button.grid(column=2, row=2, padx=5, pady=5)
+        self.com_label = QLabel('COM Port:', self)
+        self.com_label.setGeometry(20, 20, 100, 30)
 
-        # Create Text Box to Display Received Data
-        self.text_box = tk.Text(master, width=50, height=10)
-        self.text_box.grid(column=0, row=3, columnspan=3, padx=5, pady=5)
+        self.com_combo = QComboBox(self)
+        self.com_combo.setGeometry(120, 20, 150, 30)
 
-        # Set up serial port object
-        self.ser = None
-        self.ser_lock = threading.Lock()
+        self.refresh_button = QPushButton('Refresh', self)
+        self.refresh_button.setGeometry(280, 20, 100, 30)
+        self.refresh_button.clicked.connect(self.refresh_ports)
 
-        # Set up thread for reading serial data
-        self.thread = threading.Thread(target=self.serial_reader_thread)
-        self.thread_stop_event = threading.Event()
+        self.baud_label = QLabel('Baudrate:', self)
+        self.baud_label.setGeometry(20, 60, 100, 30)
 
-    def serial_ports(self):
-        """ Lists serial port names """
-        ports = ['COM{}'.format(i + 1) for i in range(256)]
-        result = []
+        self.baud_combo = QComboBox(self)
+        self.baud_combo.setGeometry(120, 60, 150, 30)
+        self.baud_combo.addItems(['9600', '19200', '38400', '57600', '115200'])
+
+        self.open_button = QPushButton('Open', self)
+        self.open_button.setGeometry(280, 60, 100, 30)
+        self.open_button.clicked.connect(self.open_port)
+
+        self.close_button = QPushButton('Close', self)
+        self.close_button.setGeometry(390, 60, 100, 30)
+        self.close_button.clicked.connect(self.close_port)
+        self.close_button.setEnabled(False)
+
+        self.send_button = QPushButton('Send', self)
+        self.send_button.setGeometry(20, 100, 100, 30)
+        self.send_button.clicked.connect(self.send_command)
+
+        self.command_text = QTextEdit(self)
+        self.command_text.setGeometry(130, 100, 360, 30)
+
+        self.receive_text = QTextEdit(self)
+        self.receive_text.setGeometry(20, 140, 470, 300)
+        self.receive_text.setReadOnly(True)
+
+    def refresh_ports(self):
+        self.com_combo.clear()
+        ports = list_ports.comports()
         for port in ports:
-            try:
-                s = serial.Serial(port)
-                s.close()
-                result.append(port)
-            except (OSError, serial.SerialException):
-                pass
-        return result
+            self.com_combo.addItem(port.device)
 
-    def open_serial_port(self):
-        """ Opens the selected serial port """
-        port = self.serial_port_combo.get()
-        baud_rate = self.baud_rate_combo.get()
+    def open_port(self):
+        port = self.com_combo.currentText()
+        baudrate = int(self.baud_combo.currentText())
+        self.serial_thread = SerialThread(port, baudrate, self)
+        self.serial_thread.data_received.connect(self.receive_data)
+        self.serial_thread.start()
+        self.open_button.setEnabled(False)
+        self.close_button.setEnabled(True)
 
-        if not self.ser:
-            try:
-                self.ser = serial.Serial(port, baud_rate)
-                self.open_button.config(state="disabled")
-                self.close_button.config(state="enabled")
-                self.send_command_button.config(state="enabled")
-                self.thread_stop_event.clear()
-                self.thread.start()
-            except serial.SerialException as e:
-                self.text_box.insert(tk.END, "Error opening serial port: {}\n".format(str(e)))
-        else:
-            self
+    def close_port(self):
+        self.serial_thread.terminate()
+        self.serial_thread.wait()
+        self.serial_thread = None
+        self.open_button.setEnabled(True)
+        self.close_button.setEnabled(False)
+
+def send_command(self):
+    # Disable the close button and enable the send button
+    self.close_button.setEnabled(False)
+    self.send_button.setEnabled(True)
+
+    # Get the selected baud rate
+    baud_rate = int(self.baud_rate_combobox.currentText())
+
+    # Get the selected COM port
+    com_port = self.com_port_combobox.currentText()
+
+    try:
+        # Open the serial port
+        self.serial_port = serial.Serial(com_port, baud_rate, timeout=1)
+
+        # Convert the command to bytes
+        command = bytes([0xc0, 0x01, 0xff, 0xff, 0xff, 0xff])
+
+        # Send the command
+        self.serial_port.write(command)
+
+        # Wait for the response
+        response = self.serial_port.read_until(bytes([0xc0]))
+
+        # Display the response
+        self.receive_textbox.setText(response.hex())
+
+    except serial.serialutil.SerialException:
+        # Display an error message if the port could not be opened
+        QMessageBox.critical(self, "Error", "Could not open serial port.")
+
+    finally:
+        # Close the serial port and re-enable the close button
+        if self.serial_port and self.serial_port.isOpen():
+            self.serial_port.close()
+        self.close_button.setEnabled(True)

@@ -22,7 +22,7 @@ class MainWindow(QWidget):
 
         # add items to port and baudrate comboboxes
         self.portComboBox.addItems(["COM11", "COM2", "COM3"])
-        self.baudrateComboBox.addItems(["9600", "19200", "38400", "57600", "115200"])
+        self.baudrateComboBox.addItems(["57600", "19200", "38400", "57600", "115200"])
 
         # set layout
         mainLayout = QVBoxLayout()
@@ -63,19 +63,25 @@ class MainWindow(QWidget):
         self.receiveResponse()
 
     def receiveResponse(self):
-        response = bytearray(self.ser.read_until(b"\xc0"))
-        while len(response) < 13 or response[0] != 0xc0 or response[-1] != 0xc0:
-            response += self.ser.read_until(b"\xc0")
-        response_checksum = sum(response[1:11]) & 0xffff
-        response_checksum_bytes = response[-3:-1]
-        expected_checksum_bytes = response_checksum.to_bytes(2, byteorder="little")
-        if response_checksum_bytes != expected_checksum_bytes:
-            self.receiveTextEdit.append("Error: Invalid response checksum.")
-        else:
-            if response[1] == 0x00:
-                self.receiveTextEdit.append("Command sent successfully.")
-            else:
-                self.receiveTextEdit.append("Error: Command failed with response code: {}".format(response[1]))
+        response = bytearray()
+        try:
+          response1 = self.ser.read()
+          response = self.ser.read_until(b"\xc0")
+          self.receiveTextEdit.append(response.hex()) # نمایش دادن response در textbox
+          
+        except serial.SerialTimeoutException:
+          self.receiveTextEdit.append("Error: Timed out while waiting for response.")
+        
+        if len(response) < 10 or response[0] != 0x07 or response[-1] != 0xc0:
+          self.receiveTextEdit.append("Error: Invalid response received.")
+        
+
+        if response[7] == 0x00:
+            self.receiveTextEdit.append("Correct password")
+        if response[7] == 0x13:
+            self.receiveTextEdit.append("Incorrect password!")
+        if response[7] == 0x01:
+         self.receiveTextEdit.append("Packet receive error {}".format(response[7]))
                 
     
     def openPort(self):

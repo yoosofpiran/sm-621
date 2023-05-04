@@ -30,77 +30,80 @@ except ImportError:
     pass
 
 import struct
+import serial
 
-from micropython import const
-from busio import UART
+
+
+#from micropython import const
+#from busio import UART
 
 __version__ = "2.2.10"
 __repo__ = "https://github.com/adafruit/Adafruit_CircuitPython_Fingerprint.git"
 
-_STARTCODE = const(0xC001)
-_COMMANDPACKET = const(0x1)
-_DATAPACKET = const(0x2)
-_ACKPACKET = const(0x7)
-_ENDDATAPACKET = const(0xc0)
+_STARTCODE = 0xC001
+_COMMANDPACKET = 0x1
+_DATAPACKET = 0x2
+_ACKPACKET = 0x7
+_ENDDATAPACKET = 0xc0
 
-_GETIMAGE = const(0x02)
-_IMAGE2TZ = const(0x03)
-_COMPARE = const(0x04)
-_FINGERPRINTSEARCH = const(0x05)
-_REGMODEL = const(0x06)
-_STORE = const(0x07)
-_LOAD = const(0x08)
-_UPLOAD = const(0x09)
-_DOWNLOAD = const(0x0A)
-_UPLOADIMAGE = const(0x0B)
-_DOWNLOADIMAGE = const(0x0C)
-_DELETE = const(0x0D)
-_EMPTY = const(0x0E)
-_SETSYSPARA = const(0x0E)
-_READSYSPARA = const(0x0F)
-_HISPEEDSEARCH = const(0x1B)
-_VERIFYPASSWORD = const(0x13)
-_TEMPLATECOUNT = const(0x1D)
-_TEMPLATEREAD = const(0x1F)
-_SOFTRESET = const(0x15)
-_GETECHO = const(0x53)
-_SETAURA = const(0x35)
+_GETIMAGE = 0x02
+_IMAGE2TZ = 0x03
+_COMPARE = 0x04
+_FINGERPRINTSEARCH = 0x05
+_REGMODEL = 0x06
+_STORE = 0x07
+_LOAD = 0x08
+_UPLOAD = 0x09
+_DOWNLOAD = 0x0A
+_UPLOADIMAGE = 0x0B
+_DOWNLOADIMAGE = 0x0C
+_DELETE = 0x0D
+_EMPTY = 0x0E
+_SETSYSPARA = 0x0E
+_READSYSPARA = 0x0F
+_HISPEEDSEARCH = 0x1B
+_VERIFYPASSWORD = 0x13
+_TEMPLATECOUNT = 0x1D
+_TEMPLATEREAD = 0x1F
+_SOFTRESET = 0x15
+_GETECHO = 0x53
+_SETAURA = 0x35
 
 # Packet error code
-OK = const(0x0)
-PACKETRECIEVEERR = const(0x01)
-NOFINGER = const(0x02)
-IMAGEFAIL = const(0x03)
-IMAGEMESS = const(0x06)
-FEATUREFAIL = const(0x07)
-NOMATCH = const(0x08)
-NOTFOUND = const(0x09)
-ENROLLMISMATCH = const(0x0A)
-BADLOCATION = const(0x0B)
-DBRANGEFAIL = const(0x0C)
-UPLOADFEATUREFAIL = const(0x0D)
-PACKETRESPONSEFAIL = const(0x0E)
-UPLOADFAIL = const(0x0F)
-DELETEFAIL = const(0x10)
-DBCLEARFAIL = const(0x11)
-PASSFAIL = const(0x13)
-INVALIDIMAGE = const(0x15)
-FLASHERR = const(0x18)
-INVALIDREG = const(0x1A)
-ADDRCODE = const(0x20)
-PASSVERIFY = const(0x21)
-MODULEOK = const(0x55)
+OK = 0x0
+PACKETRECIEVEERR = 0x01
+NOFINGER = 0x02
+IMAGEFAIL = 0x03
+IMAGEMESS = 0x06
+FEATUREFAIL = 0x07
+NOMATCH = 0x08
+NOTFOUND = 0x09
+ENROLLMISMATCH = 0x0A
+BADLOCATION = 0x0B
+DBRANGEFAIL = 0x0C
+UPLOADFEATUREFAIL = 0x0D
+PACKETRESPONSEFAIL = 0x0E
+UPLOADFAIL = 0x0F
+DELETEFAIL = 0x10
+DBCLEARFAIL = 0x11
+PASSFAIL = 0x13
+INVALIDIMAGE = 0x15
+FLASHERR = 0x18
+INVALIDREG = 0x1A
+ADDRCODE = 0x20
+PASSVERIFY = 0x21
+MODULEOK = 0x55
 
 # pylint: disable=too-many-instance-attributes
 # pylint: disable=too-many-public-methods
 class Adafruit_Fingerprint:
     """UART based fingerprint sensor."""
 
-    _debug = False
+    _debug = True
     _uart = None
 
-    password = None
-    address = [0xFF, 0xFF, 0xFF, 0xFF]
+    password = [0x00, 0x00, 0x00, 0x00]
+    address = [0x00, 0x00, 0x00, 0x00]
     finger_id = None
     confidence = None
     templates = []
@@ -113,11 +116,11 @@ class Adafruit_Fingerprint:
     system_id = None
     status_register = None
 
-    def __init__(self, uart: UART, passwd: Tuple[int, int, int, int] = (0, 0, 0, 0)):
+    def __init__(self,passwd: Tuple[int, int, int, int] = (0, 0, 0, 0)):
         # Create object with UART for interface, and default 32-bit password
         self.password = passwd
-        self._uart = uart
-        if self.verify_password() != OK:
+        self._uart = serial.Serial('COM7', baudrate=57600, timeout=1.0)
+        if self.verify_password() != 0x00:
             raise RuntimeError("Failed to find sensor, check wiring!")
         if self.read_sysparam() != OK:
             raise RuntimeError("Failed to read system parameters!")
@@ -146,7 +149,7 @@ class Adafruit_Fingerprint:
     def read_sysparam(self) -> int:
         """Returns the system parameters on success via attributes."""
         self._send_packet([_READSYSPARA])
-        r = self._get_packet(28)
+        r = self._get_packet(62)
         if r[0] != OK:
             raise RuntimeError("Command failed.")
         self.status_register = struct.unpack(">H", bytes(r[1:3]))[0]
@@ -176,7 +179,7 @@ class Adafruit_Fingerprint:
         """Requests the sensor to take an image and store it memory, returns
         the packet error code or OK success"""
         self._send_packet([_GETIMAGE])
-        return self._get_packet(12)[0]
+        return self._get_packet(17)[0]
 
     def image_2_tz(self, slot: int = 1) -> int:
         """Requests the sensor convert the image to a template, returns
@@ -305,11 +308,11 @@ class Adafruit_Fingerprint:
         slot 1. Stores the location and confidence in self.finger_id
         and self.confidence. Returns the packet error code or OK success"""
         self.read_sysparam()
-        capacity = self.library_size
+        capacity = 1776
         self._send_packet(
-            [_FINGERPRINTSEARCH, 0x01, 0x00, 0x00, capacity >> 8, capacity & 0xFF]
+            [_FINGERPRINTSEARCH,0x01, 0x00, 0x00, capacity >> 8, capacity & 0xFF]
         )
-        r = self._get_packet(16)
+        r = self._get_packet(46)
         self.finger_id, self.confidence = struct.unpack(">HH", bytes(r[1:5]))
         self._print_debug("finger_search packet:", r, data_type="hex")
         return r[0]
@@ -344,6 +347,7 @@ class Adafruit_Fingerprint:
         Returns just the data payload from the packet"""
         res = self._uart.read(expected)
         self._print_debug("_get_packet received data:", res, data_type="hex")
+        self._print_debug("len:", len(res))
         if (not res) or (len(res) != expected):
             raise RuntimeError("Failed to read data from sensor")
 
@@ -357,9 +361,9 @@ class Adafruit_Fingerprint:
         if addr != self.address:
             raise RuntimeError("Incorrect address")
 
-        packet_type, length = struct.unpack(">BH", res[6:9])
-        if packet_type != _ACKPACKET:
-            raise RuntimeError("Incorrect packet data")
+        length,packet_type= struct.unpack(">BH", res[6:9])
+        #if packet_type != 0x00:
+            #raise RuntimeError("Incorrect packet data")
 
         # we should check the checksum
         # but i don't know how
@@ -368,7 +372,7 @@ class Adafruit_Fingerprint:
         # print(packet_sum)
         # print(packet_type + length + struct.unpack('>HHHH', res[9:9+(length-2)]))
 
-        reply = list(i for i in res[9 : 9 + (length - 2)])
+        reply = list(i for i in res[8 : (length - 3)])
         self._print_debug("_get_packet reply:", reply, data_type="hex")
         return reply
 
@@ -384,7 +388,7 @@ class Adafruit_Fingerprint:
         # first two bytes are start code
         start = struct.unpack(">H", res[0:2])[0]
         self._print_debug("_get_data received start pos:", start)
-        if start != _STARTCODE:
+        if start != 0xc007:
             raise RuntimeError("Incorrect packet data")
         # next 4 bytes are address
         addr = list(i for i in res[2:6])
@@ -392,7 +396,7 @@ class Adafruit_Fingerprint:
         if addr != self.address:
             raise RuntimeError("Incorrect address")
 
-        packet_type, length = struct.unpack(">BH", res[6:9])
+        length,packet_type = struct.unpack(">BH", res[6:9])
         self._print_debug("_get_data received packet_type:", packet_type)
         self._print_debug("_get_data received length:", length)
 
@@ -424,18 +428,21 @@ class Adafruit_Fingerprint:
     def _send_packet(self, data: List[int]):
         packet = [_STARTCODE >> 8, _STARTCODE & 0xFF]
         packet = packet + self.address
-        packet.append(_COMMANDPACKET)  # the packet type
+        
 
         length = len(data) + 2
         packet.append(length >> 8)
         packet.append(length & 0xFF)
+        
+        #packet.append(_COMMANDPACKET)  # the packet type
 
         packet = packet + data
 
         checksum = sum(packet[6:])
         packet.append(checksum >> 8)
         packet.append(checksum & 0xFF)
-
+        packet.append(0xC0)
+        
         self._print_debug("_send_packet length:", len(packet))
         self._print_debug("_send_packet data:", packet, data_type="hex")
         self._uart.write(bytearray(packet))
